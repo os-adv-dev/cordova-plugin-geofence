@@ -287,13 +287,17 @@ class GeoNotificationManager : NSObject, CLLocationManagerDelegate {
     let locationManager = CLLocationManager()
     let store = GeoNotificationStore.shared
 
+    // Debouncing: track last transition time for each region
+    private var lastTransitionTimes: [String: Date] = [:]
+    private let transitionDebounceInterval: TimeInterval = 2.0 // 2 seconds
+
     override init() {
         log("GeoNotificationManager init")
         super.init()
         locationManager.delegate = self
         locationManager.desiredAccuracy = kCLLocationAccuracyBest
-        
-        
+
+
         if let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
             print("📁 Documents folder path: \(documentsPath.path)")
         }
@@ -308,6 +312,9 @@ class GeoNotificationManager : NSObject, CLLocationManagerDelegate {
     func addOrUpdateGeoNotification(_ geoNotification: JSON) {
         log(">>>>>>>> GeoNotificationManager addOrUpdate")
 
+        let notificatioNId = geoNotification["id"].stringValue
+        log("⚠️ Adding geofence with ID: \(notificatioNId)")
+        
         let (_, warnings, errors) = checkRequirements()
 
         log(warnings)
@@ -433,6 +440,9 @@ class GeoNotificationManager : NSObject, CLLocationManagerDelegate {
 
     func locationManager(_ manager: CLLocationManager, didEnterRegion region: CLRegion) {
         log(">>>>>>>> Entering region \(region.identifier)")
+        log("⚠️ Total monitored regions: \(locationManager.monitoredRegions.count)")
+        log("🔢 DEBUG: didEnterRegion called - Total monitored: \(locationManager.monitoredRegions.count)")
+        log("📍 DEBUG: Monitored regions: \(locationManager.monitoredRegions.map { $0.identifier })")
         handleTransition(region, transitionType: 1)
     }
 
@@ -487,8 +497,27 @@ class GeoNotificationManager : NSObject, CLLocationManagerDelegate {
     }
 
     func handleTransition(_ region: CLRegion!, transitionType: Int) {
+        // Debouncing: prevent duplicate transitions within short time
+        let transitionKey = "\(region.identifier)_\(transitionType)"
+        let now = Date()
+
+        if let lastTime = lastTransitionTimes[transitionKey] {
+            let timeSinceLastTransition = now.timeIntervalSince(lastTime)
+            if timeSinceLastTransition < transitionDebounceInterval {
+                log("⏭️ Skipping duplicate transition for \(region.identifier) (only \(timeSinceLastTransition)s since last)")
+                return
+            }
+        }
+
+        // Update last transition time
+        lastTransitionTimes[transitionKey] = now
+
         if var geoNotification = store.findById(region.identifier) {
             geoNotification["transitionType"].int = transitionType
+
+            // Log transition type
+            let transitionTypeName = (transitionType == 1 ? "ENTER" : "EXIT")
+            log("🚦 Transition Type: \(transitionTypeName) for region \(region.identifier)")
 
             if geoNotification["notification"].isExists() {
                 notifyAbout(geoNotification)
@@ -497,12 +526,11 @@ class GeoNotificationManager : NSObject, CLLocationManagerDelegate {
             if geoNotification["url"].isExists() {
                 log("Should post to " + geoNotification["url"].stringValue)
                 let url = URL(string: geoNotification["url"].stringValue)!
-                
+
                 let dateFormatter = DateFormatter()
                 dateFormatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'"
                 dateFormatter.timeZone = TimeZone(secondsFromGMT: 0)
-                //formatter.locale = Locale(identifier: "en_US")
-                
+
                 let payload: [String: Any] = [
                                 "geofenceId": geoNotification["id"].stringValue,
                                 "transition": (geoNotification["transitionType"].intValue == 1 ? "ENTER" : "EXIT"),
@@ -510,6 +538,11 @@ class GeoNotificationManager : NSObject, CLLocationManagerDelegate {
                                 "userId": geoNotification["userId"].stringValue
                             ]
                 let jsonData = try! JSONSerialization.data(withJSONObject: payload, options: [])
+
+                // Log payload being sent
+                if let payloadString = String(data: jsonData, encoding: .utf8) {
+                    log("📤 Sending payload: \(payloadString)")
+                }
                 
                 var request = URLRequest(url: url)
                 request.httpMethod = "post"
@@ -529,7 +562,11 @@ class GeoNotificationManager : NSObject, CLLocationManagerDelegate {
                     }
 
                     if (200...299).contains(http.statusCode) {
-                        print("✅ POST OK (\(http.statusCode))")
+                        if let payloadString = String(data: jsonData, encoding: .utf8) {
+                            print("✅ POST OK (\(http.statusCode)) - Payload: \(payloadString)")
+                        } else {
+                            print("✅ POST OK (\(http.statusCode))")
+                        }
                     } else {
                         print("⚠️ POST returned status \(http.statusCode)")
                     }
