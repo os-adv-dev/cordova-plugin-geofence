@@ -53,10 +53,20 @@ module.exports = {
     * Get the current location authorization status
     *
     * @name getAuthorizationStatus
-    * @param  {Function} success callback - Returns authorization status
+    * @param  {Function} success callback - Returns authorization status string
     * @param  {Function} error callback
     *
-    * @return {Promise} Returns the current authorization status
+    * @return {Promise} Returns the current authorization status as a string.
+    *
+    * Possible return values (iOS):
+    * - "notDetermined": User has not yet been asked for location permissions
+    * - "restricted": Location permissions are restricted (usually by parental controls or device management)
+    * - "denied": User has denied location permissions for this app
+    * - "authorizedAlways": User has granted "Always" location access (required for geofences)
+    * - "authorizedWhenInUse": User has granted "When In Use" location access only
+    * - "unknown": Unknown authorization status (future iOS versions)
+    *
+    * Note: Geofence monitoring requires "authorizedAlways" status to work properly in the background.
     */
    getAuthorizationStatus: function (success, error) {
        return execPromise(success, error, "GeofencePlugin", "getAuthorizationStatus", []);

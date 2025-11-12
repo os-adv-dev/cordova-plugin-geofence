@@ -310,7 +310,18 @@ window.geofence.getAuthorizationStatus().then(function (status) {
 });
 ```
 
-Returns the current location authorization status. This is useful to check if the app has permission to access location services.
+Returns the current location authorization status as a string. This is useful to check if the app has permission to access location services.
+
+### Possible return values (iOS):
+
+- `"notDetermined"` - User has not yet been asked for location permissions
+- `"restricted"` - Location permissions are restricted (usually by parental controls or device management profiles)
+- `"denied"` - User has denied location permissions for this app
+- `"authorizedAlways"` - User has granted "Always" location access (**required for geofences**)
+- `"authorizedWhenInUse"` - User has granted "When In Use" location access only
+- `"unknown"` - Unknown authorization status (for future iOS versions)
+
+**Important:** Geofence monitoring requires `"authorizedAlways"` status to work properly in the background. If the status is `"authorizedWhenInUse"`, geofences will not trigger when the app is not in use.
 
 ## Listening for geofence transitions
 
