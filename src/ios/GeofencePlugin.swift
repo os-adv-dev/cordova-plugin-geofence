@@ -519,10 +519,7 @@ class GeoNotificationManager : NSObject, CLLocationManagerDelegate {
             let transitionTypeName = (transitionType == 1 ? "ENTER" : "EXIT")
             log("🚦 Transition Type: \(transitionTypeName) for region \(region.identifier)")
 
-            if geoNotification["notification"].isExists() {
-                notifyAbout(geoNotification)
-            }
-
+            // Check if has URL to post (API call)
             if geoNotification["url"].isExists() {
                 log("Should post to " + geoNotification["url"].stringValue)
                 let url = URL(string: geoNotification["url"].stringValue)!
@@ -543,36 +540,58 @@ class GeoNotificationManager : NSObject, CLLocationManagerDelegate {
                 if let payloadString = String(data: jsonData, encoding: .utf8) {
                     log("📤 Sending payload: \(payloadString)")
                 }
-                
+
                 var request = URLRequest(url: url)
                 request.httpMethod = "post"
                 request.setValue("application/json", forHTTPHeaderField: "Content-Type")
                 request.setValue(geoNotification["authorization"].stringValue, forHTTPHeaderField: "Authorization")
                 request.httpBody = jsonData
-                
+
                 let task = URLSession.shared.dataTask(with: request) { _, response, error in
                     if let error = error {
                         print("❌ Network error:", error)
+                        // Show error notification
+                        if geoNotification["notification"].isExists() {
+                            self.notifyAboutError(geoNotification)
+                        }
                         return
                     }
 
                     guard let http = response as? HTTPURLResponse else {
                         print("⚠️ No HTTPURLResponse")
+                        // Show error notification
+                        if geoNotification["notification"].isExists() {
+                            self.notifyAboutError(geoNotification)
+                        }
                         return
                     }
 
                     if (200...299).contains(http.statusCode) {
+                        // API Success - show normal notification
                         if let payloadString = String(data: jsonData, encoding: .utf8) {
                             print("✅ POST OK (\(http.statusCode)) - Payload: \(payloadString)")
                         } else {
                             print("✅ POST OK (\(http.statusCode))")
                         }
+
+                        if geoNotification["notification"].isExists() {
+                            self.notifyAbout(geoNotification)
+                        }
                     } else {
+                        // API Error - show error notification
                         print("⚠️ POST returned status \(http.statusCode)")
+                        if geoNotification["notification"].isExists() {
+                            self.notifyAboutError(geoNotification)
+                        }
                     }
                 }
-                
+
                 task.resume()
+            } else {
+                // No API call - show notification immediately
+                if geoNotification["notification"].isExists() {
+                    notifyAbout(geoNotification)
+                }
             }
             
             NotificationCenter.default.post(name: Notification.Name(rawValue: "handleTransition"), object: geoNotification.rawString(String.Encoding.utf8.rawValue, options: []))
@@ -590,6 +609,23 @@ class GeoNotificationManager : NSObject, CLLocationManagerDelegate {
         if let json = geo["notification"]["data"] as JSON? {
             notification.userInfo = ["geofence.notification.data": json.rawString(String.Encoding.utf8.rawValue, options: [])!]
         }
+        UIApplication.shared.scheduleLocalNotification(notification)
+
+        if let vibrate = geo["notification"]["vibrate"].array {
+            if (!vibrate.isEmpty && vibrate[0].intValue > 0) {
+                AudioServicesPlayAlertSound(SystemSoundID(kSystemSoundID_Vibrate))
+            }
+        }
+    }
+
+    func notifyAboutError(_ geo: JSON) {
+        log("Creating error notification")
+        let notification = UILocalNotification()
+        notification.timeZone = TimeZone.current
+        let dateTime = Date()
+        notification.fireDate = dateTime
+        notification.soundName = UILocalNotificationDefaultSoundName
+        notification.alertBody = geo["notification"]["errorMessage"].stringValue
         UIApplication.shared.scheduleLocalNotification(notification)
 
         if let vibrate = geo["notification"]["vibrate"].array {
