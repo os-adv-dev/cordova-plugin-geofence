@@ -49,31 +49,12 @@ func log(_ messages: [String]) {
     @objc
     func initialize(_ command: CDVInvokedUrlCommand) {
         log(">>>> Plugin initialization empty")
-        //let faker = GeofenceFaker(manager: geoNotificationManager)
-        //faker.start()
 
-        // if iOS8 {
-        //     promptForNotificationPermission()
-        // }
-        //
-        geoNotificationManager = GeoNotificationManager()
+        // Use the existing geoNotificationManager instance instead of creating a new one
         geoNotificationManager.registerPermissions()
-        //
-        // let (ok, warnings, errors) = geoNotificationManager.checkRequirements()
-        //
-        // log(warnings)
-        // log(errors)
 
         let result: CDVPluginResult
-
-        // if ok {
-            result = CDVPluginResult(status: CDVCommandStatus_OK) // , messageAs: warnings.joined(separator: "\n")
-        // } else {
-            // result = CDVPluginResult(
-                // status: CDVCommandStatus_ILLEGAL_ACCESS_EXCEPTION,
-                // messageAs: (errors + warnings).joined(separator: "\n")
-            // )
-        // }
+        result = CDVPluginResult(status: CDVCommandStatus_OK)
 
         commandDelegate!.send(result, callbackId: command.callbackId)
     }
@@ -81,14 +62,12 @@ func log(_ messages: [String]) {
     @objc
     func requestPermissions(_ command: CDVInvokedUrlCommand) {
         log("Plugin requestPermissions")
-        //let faker = GeofenceFaker(manager: geoNotificationManager)
-        //faker.start()
 
         if iOS8 {
             promptForNotificationPermission()
         }
 
-        geoNotificationManager = GeoNotificationManager()
+        // Use the existing geoNotificationManager instance instead of creating a new one
         geoNotificationManager.registerPermissions()
 
         let (ok, warnings, errors) = geoNotificationManager.checkRequirements()
@@ -217,6 +196,31 @@ func log(_ messages: [String]) {
             }
         }
     }
+    
+    @objc
+    func getAuthorizationStatus(_ command: CDVInvokedUrlCommand) {
+        log("getAuthorizationStatus")
+        let authStatus = CLLocationManager.authorizationStatus()
+
+        var statusString: String
+          switch authStatus {
+          case .notDetermined:
+              statusString = "notDetermined"
+          case .restricted:
+              statusString = "restricted"
+          case .denied:
+              statusString = "denied"
+          case .authorizedAlways:
+              statusString = "authorizedAlways"
+          case .authorizedWhenInUse:
+              statusString = "authorizedWhenInUse"
+          @unknown default:
+              statusString = "unknown"
+          }
+
+          let pluginResult = CDVPluginResult(status: CDVCommandStatus_OK, messageAs: statusString)
+          commandDelegate!.send(pluginResult, callbackId: command.callbackId)
+    }
 
     func evaluateJs (_ script: String) {
         if let webView = webView {
@@ -288,7 +292,6 @@ class GeoNotificationManager : NSObject, CLLocationManagerDelegate {
         super.init()
         locationManager.delegate = self
         locationManager.desiredAccuracy = kCLLocationAccuracyBest
-      //  locationManager.startUpdatingLocation()
         
         
         if let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
@@ -457,12 +460,30 @@ class GeoNotificationManager : NSObject, CLLocationManagerDelegate {
     }
     
     func locationManager(_ manager: CLLocationManager, didChangeAuthorization status: CLAuthorizationStatus) {
-        if status == .authorizedAlways || status == .authorizedWhenInUse {
-            log("✅ Authorized, starting updates")
-            locationManager.startUpdatingLocation()
-        } else {
-            log("❌ Not authorized: \(status.rawValue)")
-        }
+        var statusString: String
+        switch status {
+          case .notDetermined:
+              statusString = "notDetermined"
+          case .restricted:
+              statusString = "restricted"
+          case .denied:
+              statusString = "denied"
+          case .authorizedAlways:
+              statusString = "authorizedAlways"
+          case .authorizedWhenInUse:
+              statusString = "authorizedWhenInUse"
+          @unknown default:
+              statusString = "unknown"
+          }
+
+          log("Location authorization changed to: \(statusString)")
+
+          if status == .authorizedAlways || status == .authorizedWhenInUse {
+              log("✅ Authorized, starting updates")
+              locationManager.startUpdatingLocation()
+          } else {
+              log("❌ Not authorized: \(status.rawValue)")
+          }
     }
 
     func handleTransition(_ region: CLRegion!, transitionType: Int) {

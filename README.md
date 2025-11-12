@@ -125,6 +125,7 @@ All methods returning promises, but you can also use standard callback functions
 - `window.geofence.remove(geofenceId, onSuccess, onError)`
 - `window.geofence.removeAll(onSuccess, onError)`
 - `window.geofence.getWatched(onSuccess, onError)`
+- `window.geofence.getAuthorizationStatus(onSuccess, onError)`
 
 For listening of geofence transistion you can override onTransitionReceived method
 - `window.geofence.onTransitionReceived(geofences)`
@@ -298,6 +299,18 @@ window.geofence.getWatched().then(function (geofencesJson) {
     var geofences = JSON.parse(geofencesJson);
 });
 ```
+
+## Getting location authorization status
+
+```javascript
+window.geofence.getAuthorizationStatus().then(function (status) {
+    console.log('Authorization status:', status);
+}, function (error) {
+    console.log('Error getting authorization status', error);
+});
+```
+
+Returns the current location authorization status. This is useful to check if the app has permission to access location services.
 
 ## Listening for geofence transitions
 

@@ -145,6 +145,7 @@
         <config-file target="*-Info.plist" parent="UIBackgroundModes">
             <array>
                 <string>remote-notification</string>
+                <string>location</string>
             </array>
         </config-file>
         <config-file target="config.xml" parent="/*">

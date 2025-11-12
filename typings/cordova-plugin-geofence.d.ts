@@ -37,6 +37,11 @@ interface GeofencePlugin {
     errorCallback?: (error: string) => void
   ): Promise<string>;
 
+  getAuthorizationStatus(
+    successCallback?: (result: any) => void,
+    errorCallback?: (error: string) => void
+  ): Promise<any>;
+
   onTransitionReceived: (geofences: Geofence[]) => void;
   
   onNotificationClicked: (notificationData: Object) => void;
