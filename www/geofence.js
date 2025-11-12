@@ -49,6 +49,18 @@ module.exports = {
    requestPermissions: function (success, error) {
        return execPromise(success, error, "GeofencePlugin", "requestPermissions", []);
    },
+   /**
+    * Get the current location authorization status
+    *
+    * @name getAuthorizationStatus
+    * @param  {Function} success callback - Returns authorization status
+    * @param  {Function} error callback
+    *
+    * @return {Promise} Returns the current authorization status
+    */
+   getAuthorizationStatus: function (success, error) {
+       return execPromise(success, error, "GeofencePlugin", "getAuthorizationStatus", []);
+   },
     /**
      * Adding new geofence to monitor.
      * Geofence could override the previously one with the same id.

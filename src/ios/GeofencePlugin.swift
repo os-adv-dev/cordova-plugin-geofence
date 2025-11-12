@@ -289,7 +289,7 @@ class GeoNotificationManager : NSObject, CLLocationManagerDelegate {
 
     // Debouncing: track last transition time for each region
     private var lastTransitionTimes: [String: Date] = [:]
-    private let transitionDebounceInterval: TimeInterval = 2.0 // 2 seconds
+    private let transitionDebounceInterval: TimeInterval = 5.0 // 5 seconds
 
     override init() {
         log("GeoNotificationManager init")
