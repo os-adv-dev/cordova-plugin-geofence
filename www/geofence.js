@@ -161,7 +161,15 @@ module.exports = {
      */
     ping: function (success, error) {
         return execPromise(success, error, "GeofencePlugin", "ping", []);
-    }
+    },    
+    /** get all error logs*/
+    getGeofenceErrorLogs: function (success, error) {
+        return execPromise(success, error, "GeofencePlugin", "getGeofenceErrorLogs", []);
+    },
+    /** delete all error logs*/
+    clearGeofenceErrorLogs: function (success, error) {
+        return execPromise(success, error, "GeofencePlugin", "clearGeofenceErrorLogs", []);
+    },
 };
 
 function execPromise(success, error, pluginName, method, args) {
