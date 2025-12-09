@@ -25,6 +25,86 @@ func log(_ messages: [String]) {
     }
 }
 
+// MARK: - Geofence Error Logger
+class GeofenceErrorLogger {
+    static let shared = GeofenceErrorLogger()
+
+    private let fileName = "GeofenceErrors.log"
+    private let queue = DispatchQueue(label: "com.geofence.errorlogger", qos: .utility)
+
+    private var fileURL: URL {
+        let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        return documentsPath.appendingPathComponent(fileName)
+    }
+
+    private init() {}
+
+    /// Log an error with details to file AND OSLogger
+    func logError(type: String, message: String, extra: [String: Any]? = nil) {
+        // Log to file
+        queue.async {
+            let dateFormatter = DateFormatter()
+            dateFormatter.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS"
+            let timestamp = dateFormatter.string(from: Date())
+
+            var logEntry = "[\(timestamp)] [\(type)] \(message)"
+
+            if let extra = extra {
+                let extraString = extra.map { "\($0.key): \($0.value)" }.joined(separator: ", ")
+                logEntry += " | Details: {\(extraString)}"
+            }
+
+            logEntry += "\n"
+
+            self.appendToFile(logEntry)
+        }
+
+        // Also log to OSLogger
+        var extraWithType = extra ?? [:]
+        extraWithType["errorType"] = type
+    }
+
+    private func appendToFile(_ text: String) {
+        do {
+            if FileManager.default.fileExists(atPath: fileURL.path) {
+                let fileHandle = try FileHandle(forWritingTo: fileURL)
+                fileHandle.seekToEndOfFile()
+                if let data = text.data(using: .utf8) {
+                    fileHandle.write(data)
+                }
+                fileHandle.closeFile()
+            } else {
+                try text.write(to: fileURL, atomically: true, encoding: .utf8)
+            }
+        } catch {
+            NSLog("GeofenceErrorLogger - Failed to write to log file: \(error)")
+        }
+    }
+
+    /// Get all logged errors as a single string with line breaks
+    func getAllLogs() -> String {
+        do {
+            if FileManager.default.fileExists(atPath: fileURL.path) {
+                return try String(contentsOf: fileURL, encoding: .utf8)
+            }
+        } catch {
+            NSLog("GeofenceErrorLogger - Failed to read log file: \(error)")
+        }
+        return ""
+    }
+
+    /// Clear all logs
+    func clearLogs() {
+        do {
+            if FileManager.default.fileExists(atPath: fileURL.path) {
+                try FileManager.default.removeItem(at: fileURL)
+            }
+        } catch {
+            NSLog("GeofenceErrorLogger - Failed to clear log file: \(error)")
+        }
+    }
+}
+
 @available(iOS 8.0, *)
 @objc(HWPGeofencePlugin) class GeofencePlugin : CDVPlugin {
     lazy var geoNotificationManager = GeoNotificationManager()
@@ -222,6 +302,22 @@ func log(_ messages: [String]) {
           commandDelegate!.send(pluginResult, callbackId: command.callbackId)
     }
 
+    @objc
+    func getGeofenceErrorLogs(_ command: CDVInvokedUrlCommand) {
+        log("getGeofenceErrorLogs")
+        let logs = GeofenceErrorLogger.shared.getAllLogs()
+        let pluginResult = CDVPluginResult(status: CDVCommandStatus_OK, messageAs: logs)
+        commandDelegate!.send(pluginResult, callbackId: command.callbackId)
+    }
+
+    @objc
+    func clearGeofenceErrorLogs(_ command: CDVInvokedUrlCommand) {
+        log("clearGeofenceErrorLogs")
+        GeofenceErrorLogger.shared.clearLogs()
+        let pluginResult = CDVPluginResult(status: CDVCommandStatus_OK)
+        commandDelegate!.send(pluginResult, callbackId: command.callbackId)
+    }
+
     func evaluateJs (_ script: String) {
         if let webView = webView {
             if let uiWebView = webView as? UIWebView {
@@ -349,23 +445,39 @@ class GeoNotificationManager : NSObject, CLLocationManagerDelegate {
 
         if (!CLLocationManager.isMonitoringAvailable(for: CLRegion.self)) {
             errors.append(">>>>>>>> Geofencing not available")
+            GeofenceErrorLogger.shared.logError(type: "GeofencingNotAvailable", message: "Geofencing not available on this device")
         }
 
         if (!CLLocationManager.locationServicesEnabled()) {
             errors.append(">>>>>>>> Error: Locationservices not enabled")
+            GeofenceErrorLogger.shared.logError(type: "LocationServicesDisabled", message: "Location services not enabled")
         }
 
         let authStatus = CLLocationManager.authorizationStatus()
 
         if (authStatus != CLAuthorizationStatus.authorizedAlways) {
             errors.append("Warning: Location always permissions not granted")
+
+            var statusString: String
+            switch authStatus {
+              case .notDetermined: statusString = "notDetermined"
+              case .restricted: statusString = "restricted"
+              case .denied: statusString = "denied"
+              case .authorizedWhenInUse: statusString = "authorizedWhenInUse"
+              default: statusString = "unknown"
+            }
+            GeofenceErrorLogger.shared.logError(type: "PermissionNotGranted", message: "Location always permissions not granted", extra: [
+                "currentAuthStatus": statusString,
+                "requiredAuthStatus": "authorizedAlways"
+            ])
         }
 
         if (iOS8) {
-            DispatchQueue.main.async { // Due to async, the return of checkRequirements is not ok
+            DispatchQueue.main.async {
                 if let notificationSettings = UIApplication.shared.currentUserNotificationSettings {
                     if notificationSettings.types == UIUserNotificationType() {
                         errors.append("Error: notification permission missing")
+                        GeofenceErrorLogger.shared.logError(type: "NotificationPermissionMissing", message: "Notification permission missing")
                     } else {
                         if !notificationSettings.types.contains(.sound) {
                             warnings.append("Warning: notification settings - sound permission missing")
@@ -381,6 +493,7 @@ class GeoNotificationManager : NSObject, CLLocationManagerDelegate {
                     }
                 } else {
                     errors.append("Error: notification permission missing")
+                    GeofenceErrorLogger.shared.logError(type: "NotificationSettingsUnavailable", message: "Notification settings not available")
                 }
             }
         }
@@ -432,10 +545,20 @@ class GeoNotificationManager : NSObject, CLLocationManagerDelegate {
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
         log("fail with error: \(error)")
+        GeofenceErrorLogger.shared.logError(type: "LocationManagerError", message: "LocationManager failed: \(error.localizedDescription)", extra: [
+            "errorCode": (error as NSError).code,
+            "errorDomain": (error as NSError).domain
+        ])
     }
 
     func locationManager(_ manager: CLLocationManager, didFinishDeferredUpdatesWithError error: Error?) {
         log(">>>>>>>> deferred fail error: \(error)")
+        if let error = error {
+            GeofenceErrorLogger.shared.logError(type: "DeferredUpdatesError", message: "Deferred updates failed: \(error.localizedDescription)", extra: [
+                "errorCode": (error as NSError).code,
+                "errorDomain": (error as NSError).domain
+            ])
+        }
     }
 
     func locationManager(_ manager: CLLocationManager, didEnterRegion region: CLRegion) {
@@ -466,7 +589,14 @@ class GeoNotificationManager : NSObject, CLLocationManagerDelegate {
     }
 
     func locationManager(_ manager: CLLocationManager, monitoringDidFailFor region: CLRegion?, withError error: Error) {
-        log(">>>>>>>> Monitoring region " + region!.identifier + " failed \(error)" )
+        let regionId = region?.identifier ?? "unknown"
+        log(">>>>>>>> Monitoring region " + regionId + " failed \(error)")
+        GeofenceErrorLogger.shared.logError(type: "MonitoringFailedError", message: "Monitoring failed for region \(regionId): \(error.localizedDescription)", extra: [
+            "regionId": regionId,
+            "errorCode": (error as NSError).code,
+            "errorDomain": (error as NSError).domain,
+            "totalMonitoredRegions": locationManager.monitoredRegions.count
+        ])
     }
     
     func locationManager(_ manager: CLLocationManager, didChangeAuthorization status: CLAuthorizationStatus) {
@@ -493,10 +623,17 @@ class GeoNotificationManager : NSObject, CLLocationManagerDelegate {
               locationManager.startUpdatingLocation()
           } else {
               log("❌ Not authorized: \(status.rawValue)")
+              GeofenceErrorLogger.shared.logError(type: "AuthorizationError", message: "Location authorization not granted: \(statusString)", extra: [
+                  "authorizationStatus": statusString,
+                  "authorizationStatusRaw": status.rawValue,
+                  "isGeofencingAvailable": CLLocationManager.isMonitoringAvailable(for: CLCircularRegion.self),
+                  "isLocationServicesEnabled": CLLocationManager.locationServicesEnabled()
+              ])
           }
     }
 
     func handleTransition(_ region: CLRegion!, transitionType: Int) {
+
         // Debouncing: prevent duplicate transitions within short time
         let transitionKey = "\(region.identifier)_\(transitionType)"
         let now = Date()
@@ -547,10 +684,14 @@ class GeoNotificationManager : NSObject, CLLocationManagerDelegate {
                 request.setValue(geoNotification["authorization"].stringValue, forHTTPHeaderField: "Authorization")
                 request.httpBody = jsonData
 
-                let task = URLSession.shared.dataTask(with: request) { _, response, error in
+                let task = URLSession.shared.dataTask(with: request) { responseData, response, error in
                     if let error = error {
-                        print("❌ Network error:", error)
-                        // Show error notification
+                        GeofenceErrorLogger.shared.logError(type: "NetworkError", message: "API network error for region \(region.identifier): \(error.localizedDescription)", extra: [
+                            "geofenceId": geoNotification["id"].stringValue,
+                            "transition": transitionTypeName,
+                            "url": geoNotification["url"].stringValue
+                        ])
+
                         if geoNotification["notification"].isExists() {
                             self.notifyAboutError(geoNotification)
                         }
@@ -558,8 +699,12 @@ class GeoNotificationManager : NSObject, CLLocationManagerDelegate {
                     }
 
                     guard let http = response as? HTTPURLResponse else {
-                        print("⚠️ No HTTPURLResponse")
-                        // Show error notification
+                        GeofenceErrorLogger.shared.logError(type: "InvalidResponse", message: "API invalid response for region \(region.identifier): No HTTPURLResponse", extra: [
+                            "geofenceId": geoNotification["id"].stringValue,
+                            "transition": transitionTypeName,
+                            "url": geoNotification["url"].stringValue
+                        ])
+
                         if geoNotification["notification"].isExists() {
                             self.notifyAboutError(geoNotification)
                         }
@@ -567,19 +712,25 @@ class GeoNotificationManager : NSObject, CLLocationManagerDelegate {
                     }
 
                     if (200...299).contains(http.statusCode) {
-                        // API Success - show normal notification
-                        if let payloadString = String(data: jsonData, encoding: .utf8) {
-                            print("✅ POST OK (\(http.statusCode)) - Payload: \(payloadString)")
-                        } else {
-                            print("✅ POST OK (\(http.statusCode))")
-                        }
-
+                        // API Success - no logging needed
                         if geoNotification["notification"].isExists() {
                             self.notifyAbout(geoNotification)
                         }
                     } else {
-                        // API Error - show error notification
-                        print("⚠️ POST returned status \(http.statusCode)")
+                        var responseBody = ""
+                        if let data = responseData, let bodyString = String(data: data, encoding: .utf8) {
+                            responseBody = bodyString
+                        }
+
+                        GeofenceErrorLogger.shared.logError(type: "HTTPError", message: "API error for region \(region.identifier): HTTP \(http.statusCode)", extra: [
+                            "geofenceId": geoNotification["id"].stringValue,
+                            "transition": transitionTypeName,
+                            "url": geoNotification["url"].stringValue,
+                            "statusCode": http.statusCode,
+                            "responseBody": "",
+                            "requestPayload": String(data: jsonData, encoding: .utf8) ?? ""
+                        ])
+
                         if geoNotification["notification"].isExists() {
                             self.notifyAboutError(geoNotification)
                         }
@@ -593,44 +744,57 @@ class GeoNotificationManager : NSObject, CLLocationManagerDelegate {
                     notifyAbout(geoNotification)
                 }
             }
-            
+
             NotificationCenter.default.post(name: Notification.Name(rawValue: "handleTransition"), object: geoNotification.rawString(String.Encoding.utf8.rawValue, options: []))
+        } else {
+            // Geofence not found in store
+            let transitionTypeName = (transitionType == 1 ? "ENTER" : "EXIT")
+            GeofenceErrorLogger.shared.logError(type: "GeofenceNotFoundInStore", message: "Transition triggered but geofence not found in store", extra: [
+                "regionId": region.identifier,
+                "transitionType": transitionTypeName,
+                "totalMonitoredRegions": locationManager.monitoredRegions.count,
+                "storedGeofencesCount": store.getAll().count
+            ])
         }
     }
 
     func notifyAbout(_ geo: JSON) {
         log("Creating notification")
-        let notification = UILocalNotification()
-        notification.timeZone = TimeZone.current
-        let dateTime = Date()
-        notification.fireDate = dateTime
-        notification.soundName = UILocalNotificationDefaultSoundName
-        notification.alertBody = geo["notification"]["text"].stringValue
-        if let json = geo["notification"]["data"] as JSON? {
-            notification.userInfo = ["geofence.notification.data": json.rawString(String.Encoding.utf8.rawValue, options: [])!]
-        }
-        UIApplication.shared.scheduleLocalNotification(notification)
+        DispatchQueue.main.async {
+            let notification = UILocalNotification()
+            notification.timeZone = TimeZone.current
+            let dateTime = Date()
+            notification.fireDate = dateTime
+            notification.soundName = UILocalNotificationDefaultSoundName
+            notification.alertBody = geo["notification"]["text"].stringValue
+            if let json = geo["notification"]["data"] as JSON? {
+                notification.userInfo = ["geofence.notification.data": json.rawString(String.Encoding.utf8.rawValue, options: [])!]
+            }
+            UIApplication.shared.scheduleLocalNotification(notification)
 
-        if let vibrate = geo["notification"]["vibrate"].array {
-            if (!vibrate.isEmpty && vibrate[0].intValue > 0) {
-                AudioServicesPlayAlertSound(SystemSoundID(kSystemSoundID_Vibrate))
+            if let vibrate = geo["notification"]["vibrate"].array {
+                if (!vibrate.isEmpty && vibrate[0].intValue > 0) {
+                    AudioServicesPlayAlertSound(SystemSoundID(kSystemSoundID_Vibrate))
+                }
             }
         }
     }
 
     func notifyAboutError(_ geo: JSON) {
         log("Creating error notification")
-        let notification = UILocalNotification()
-        notification.timeZone = TimeZone.current
-        let dateTime = Date()
-        notification.fireDate = dateTime
-        notification.soundName = UILocalNotificationDefaultSoundName
-        notification.alertBody = geo["notification"]["errorMessage"].stringValue
-        UIApplication.shared.scheduleLocalNotification(notification)
+        DispatchQueue.main.async {
+            let notification = UILocalNotification()
+            notification.timeZone = TimeZone.current
+            let dateTime = Date()
+            notification.fireDate = dateTime
+            notification.soundName = UILocalNotificationDefaultSoundName
+            notification.alertBody = geo["notification"]["errorMessage"].stringValue
+            UIApplication.shared.scheduleLocalNotification(notification)
 
-        if let vibrate = geo["notification"]["vibrate"].array {
-            if (!vibrate.isEmpty && vibrate[0].intValue > 0) {
-                AudioServicesPlayAlertSound(SystemSoundID(kSystemSoundID_Vibrate))
+            if let vibrate = geo["notification"]["vibrate"].array {
+                if (!vibrate.isEmpty && vibrate[0].intValue > 0) {
+                    AudioServicesPlayAlertSound(SystemSoundID(kSystemSoundID_Vibrate))
+                }
             }
         }
     }
@@ -659,6 +823,7 @@ class GeoNotificationStore {
             print("✅ GeoNotifications database created or opened successfully")
         } catch {
             print("❌ Error setting up GeoNotifications database: \(error)")
+            GeofenceErrorLogger.shared.logError(type: "DatabaseSetupError", message: "Failed to setup database: \(error.localizedDescription)")
         }
     }
 
@@ -673,24 +838,21 @@ class GeoNotificationStore {
 
     func add(_ geoNotification: JSON) {
         let geoId = geoNotification["id"].stringValue
-        
+
         guard let rawData = try? geoNotification.rawData(),
               let jsonString = String(data: rawData, encoding: .utf8) else {
             print("❌ Failed to serialize JSON for GeoNotification \(geoId)")
+            GeofenceErrorLogger.shared.logError(type: "JSONSerializationError", message: "Failed to serialize JSON", extra: ["geofenceId": geoId, "operation": "add"])
             return
         }
-        
+
         do {
             print("💾 Will insert JSON:\n\(jsonString)")
-            
-            try db.run(geoNotifications.insert(
-                id <- geoId,
-                data <- jsonString
-            ))
-
+            try db.run(geoNotifications.insert(id <- geoId, data <- jsonString))
             print("✅ GeoNotification \(geoId) inserted successfully")
         } catch {
             print("❌ Error inserting GeoNotification \(geoId): \(error)")
+            GeofenceErrorLogger.shared.logError(type: "DatabaseInsertError", message: "Failed to insert: \(error.localizedDescription)", extra: ["geofenceId": geoId])
         }
     }
 
@@ -699,6 +861,7 @@ class GeoNotificationStore {
         guard let rawData = try? geoNotification.rawData(),
               let jsonString = String(data: rawData, encoding: .utf8) else {
             print("❌ Failed to serialize JSON for GeoNotification \(geoId)")
+            GeofenceErrorLogger.shared.logError(type: "JSONSerializationError", message: "Failed to serialize JSON", extra: ["geofenceId": geoId, "operation": "update"])
             return
         }
 
@@ -708,6 +871,7 @@ class GeoNotificationStore {
             print("✅ GeoNotification \(geoId) updated")
         } catch {
             print("❌ Error updating GeoNotification \(geoId): \(error)")
+            GeofenceErrorLogger.shared.logError(type: "DatabaseUpdateError", message: "Failed to update: \(error.localizedDescription)", extra: ["geofenceId": geoId])
         }
     }
 
@@ -722,25 +886,33 @@ class GeoNotificationStore {
             }
         } catch {
             print("❌ Error fetching GeoNotification \(geoId): \(error)")
+            GeofenceErrorLogger.shared.logError(type: "DatabaseFetchError", message: "Failed to fetch: \(error.localizedDescription)", extra: ["geofenceId": geoId])
         }
         return nil
     }
 
     func getAll() -> [[String: Any]] {
         var results = [[String: Any]]()
-        
-        for row in try! db.prepare(geoNotifications) {
-            let jsonString = row[data]
-            print("📦 Fetched JSON string: \(jsonString)")
 
-            if let jsonData = jsonString.data(using: .utf8),
-               let jsonObject = try? JSONSerialization.jsonObject(with: jsonData, options: []),
-               let jsonDict = jsonObject as? [String: Any] {
-                results.append(jsonDict)
-            } else {
-                print("❌ Couldn't deserialize json string")
+        do {
+            for row in try db.prepare(geoNotifications) {
+                let jsonString = row[data]
+                print("📦 Fetched JSON string: \(jsonString)")
+
+                if let jsonData = jsonString.data(using: .utf8),
+                   let jsonObject = try? JSONSerialization.jsonObject(with: jsonData, options: []),
+                   let jsonDict = jsonObject as? [String: Any] {
+                    results.append(jsonDict)
+                } else {
+                    print("❌ Couldn't deserialize json string")
+                    GeofenceErrorLogger.shared.logError(type: "JSONDeserializationError", message: "Failed to deserialize JSON from database", extra: ["rawJsonString": jsonString])
+                }
             }
+        } catch {
+            print("❌ Error getting all GeoNotifications: \(error)")
+            GeofenceErrorLogger.shared.logError(type: "DatabaseGetAllError", message: "Failed to get all: \(error.localizedDescription)")
         }
+
         return results
     }
 
@@ -751,6 +923,7 @@ class GeoNotificationStore {
             print("✅ GeoNotification \(geoId) removed")
         } catch {
             print("❌ Error deleting GeoNotification \(geoId): \(error)")
+            GeofenceErrorLogger.shared.logError(type: "DatabaseDeleteError", message: "Failed to delete: \(error.localizedDescription)", extra: ["geofenceId": geoId])
         }
     }
 
@@ -760,6 +933,7 @@ class GeoNotificationStore {
             print("✅ All GeoNotifications deleted")
         } catch {
             print("❌ Error deleting all GeoNotifications: \(error)")
+            GeofenceErrorLogger.shared.logError(type: "DatabaseClearError", message: "Failed to clear all: \(error.localizedDescription)")
         }
     }
 }
